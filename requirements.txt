@@ -1,0 +1,15 @@
+# Google Gemini API
+google-genai
+
+# .env 환경변수 로드
+python-dotenv
+
+# 로봇 물리 시뮬레이션과 SO-101 모델
+mujoco
+mujoco-menagerie
+
+# 수치 계산과 역기구학
+numpy
+
+# 이미지 처리 및 결과 이미지 저장
+Pillow
