@@ -27,7 +27,26 @@ ARM_NAMES = [
 CUBE_HALF = 0.02
 PICK = np.array([0.22, 0.00, CUBE_HALF])
 PLACE = np.array([0.20, 0.10, CUBE_HALF])
-HOVER_Z = 0.06
+HOVER_Z = 0.07
+
+# 큐브 위치 설정 
+CUBE_COLORS = {
+    "blue_cube": (0.10, 0.30, 0.95, 1.0),
+    "red_cube": (0.90, 0.12, 0.12, 1.0),
+    "yellow_cube": (0.95, 0.78, 0.10, 1.0),
+}
+
+CUBE_SLOTS_XY = (
+    (0.22, 0.00),
+    (0.24, -0.05),
+    (0.26, 0.05),
+)
+
+CUBE_LAYOUTS = {
+    "A": ("blue_cube", "red_cube", "yellow_cube"),
+    "B": ("red_cube", "yellow_cube", "blue_cube"),
+}
+
 
 GRIP_OPEN = math.radians(45)
 GRIP_CLOSE = math.radians(-5)

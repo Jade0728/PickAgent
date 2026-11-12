@@ -14,9 +14,9 @@ if __package__ in (None, ""):
         0, str(Path(__file__).resolve().parent.parent)
     )
 
-from week1 import config as cfg
-from week1.agent import Agent, capture, validate_selection
-from week1.robot import OperationCancelled, Robot
+from codes import config as cfg
+from codes.agent import Agent, capture, validate_selection
+from codes.robot import OperationCancelled, Robot
 
 
 class TestViewer:
@@ -34,9 +34,9 @@ class TestViewer:
         """화면 갱신은 생략합니다."""
 
 
-def prepare_robot():
+def prepare_robot(layout="A"):
     """실시간 대기만 생략한 테스트용 로봇을 만듭니다."""
-    robot = Robot()
+    robot = Robot(layout=layout)
     viewer = TestViewer()
 
     def fast_step(unused):
@@ -91,10 +91,14 @@ def test_physical_pipeline():
     ):
         image, depth = capture(renderer, robot)
         args = synthetic_selection(image)
-        _, source = validate_selection(args, robot, depth)
+        _, source, cube_name, cube_id = validate_selection(
+            args, robot, depth
+        )
+        assert cube_name == "blue_cube"
+        assert cube_id == robot.cube_ids["blue_cube"]
 
         error = float(np.linalg.norm(
-            source - robot.data.xpos[robot.cube_id]
+            source - robot.data.xpos[cube_id]
         ))
         assert error < 0.004, f"역투영 오차: {error:.6f}m"
 
@@ -107,9 +111,10 @@ def test_physical_pipeline():
 
         image2, depth2 = capture(renderer, robot)
         args2 = synthetic_selection(image2)
-        _, source2 = validate_selection(args2, robot, depth2)
+        _, source2, _, cube_id2 = validate_selection(args2, robot, depth2)
+        assert cube_id2 == cube_id
 
-        repeated = robot.execute_pick(viewer, source2)
+        repeated = robot.execute_pick(viewer, source2, cube_id2)
         assert repeated["status"] == "already_at_destination"
 
         try:
@@ -190,7 +195,8 @@ def test_failure_blocks_next_stage():
     """접근 도달 실패 뒤 집게 닫기가 실행되지 않는지 확인합니다."""
     robot, viewer = prepare_robot()
     robot.hold(viewer, 1.5)
-    source = robot.data.xpos[robot.cube_id].copy()
+    cube_id = robot.cube_ids["blue_cube"]
+    source = robot.data.xpos[cube_id].copy()
 
     with (
         patch.object(
@@ -203,7 +209,7 @@ def test_failure_blocks_next_stage():
         ) as gripper,
     ):
         try:
-            robot.execute_pick(viewer, source)
+            robot.execute_pick(viewer, source, cube_id)
         except RuntimeError as exc:
             assert "injected arrival failure" in str(exc)
         else:
@@ -240,11 +246,11 @@ def test_failure_latch():
         tempfile.TemporaryDirectory() as folder,
         patch.object(cfg, "OUTPUT_DIR", Path(folder)),
         patch(
-            "week1.agent.validate_selection",
+            "codes.agent.validate_selection",
             side_effect=RuntimeError("injected failure"),
         ),
         patch(
-            "week1.agent.capture",
+            "codes.agent.capture",
             side_effect=RuntimeError("injected rendering failure"),
         ),
     ):
@@ -257,8 +263,10 @@ def test_failure_latch():
     assert robot.faulted
     assert "image_save_error" in result
 
+    cube_id = robot.cube_ids["blue_cube"]
+
     try:
-        robot.execute_pick(viewer, cfg.PICK.copy())
+        robot.execute_pick(viewer, cfg.PICK.copy(), cube_id)
     except RuntimeError as exc:
         assert "초기화" in str(exc)
     else:

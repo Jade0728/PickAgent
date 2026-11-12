@@ -3,6 +3,7 @@
 import io
 import json
 import math
+from unittest import result
 
 import mujoco
 import numpy as np
@@ -11,6 +12,7 @@ from PIL import Image, ImageDraw
 
 from . import config as cfg
 from .robot import OperationCancelled, find_id
+from codes import robot
 
 
 def capture(renderer, robot):
@@ -120,7 +122,25 @@ def validate_selection(args, robot, depth):
     ):
         raise ValueError("선택 위치가 작업 영역 밖입니다.")
 
-    return pixels, point
+    matches = []
+    tolerance_m = 0.003
+
+    for cube_name, cube_id in robot.cube_ids.items():
+        center = robot.data.xpos[cube_id]
+        rotation = robot.data.xmat[cube_id].reshape(3, 3)
+        local = rotation.T @ (surface - center)
+
+        if (
+            np.all(np.abs(local[:2]) <= cfg.CUBE_HALF + tolerance_m)
+            and abs(local[2] - cfg.CUBE_HALF) <= tolerance_m
+        ):
+            matches.append((cube_name, cube_id))
+
+    if len(matches) != 1:
+        raise ValueError("인식 위치를 장면의 큐브 하나에 연결할 수 없습니다.")
+
+    cube_name, cube_id = matches[0]
+    return pixels, point, cube_name, cube_id
 
 
 class Agent:
@@ -222,10 +242,11 @@ class Agent:
     ):
         """선택 검증부터 물리 실행·실패 차단·결과 저장까지 처리합니다."""
         result = {"status": "error", "message": "미실행"}
+        cube_name = None
 
         try:
             robot.check_operation(viewer)
-            pixels, source = validate_selection(args, robot, depth)
+            pixels, source, cube_name, cube_id = validate_selection(args, robot, depth)
 
             cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -235,12 +256,12 @@ class Agent:
             )
             marked.save(cfg.OUTPUT_DIR / f"{prefix}_box.png")
 
-            result = robot.execute_pick(viewer, source)
+            result = robot.execute_pick(viewer, source, cube_id)
 
             if result["status"] == "success":
                 robot.park(viewer)
 
-                evaluation = robot.evaluate_destination()
+                evaluation = robot.evaluate_destination(cube_id)
                 result["evaluation_after_parking"] = evaluation
 
                 if not evaluation["success"]:
@@ -258,6 +279,9 @@ class Agent:
             result = {"status": "error", "message": str(exc)}
 
         finally:
+            if cube_name is not None:
+                result["selected_cube"] = cube_name
+                
             result["stage"] = robot.stage
             result["reach_metrics"] = robot.last_reach_metrics
 

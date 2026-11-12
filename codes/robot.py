@@ -36,24 +36,33 @@ def skew(vector):
     ])
 
 
-def build_scene():
-    """SO-101 모델에 큐브·목적지·고정 카메라를 추가합니다."""
+def build_scene(layout="A"):
+    """SO-101 모델에 3색 큐브, 배출구 표시, 고정 카메라를 추가합니다."""
+    if layout not in cfg.CUBE_LAYOUTS:
+        raise ValueError(f"지원하는 배치는 A와 B입니다: {layout!r}")
+
     spec = menagerie.get("robotstudio_so101").spec("scene")
 
-    cube = spec.worldbody.add_body(
-        name="blue_cube",
-        pos=cfg.PICK.tolist(),
-    )
-    cube.add_freejoint()
-    cube.add_geom(
-        name="cube_geom",
-        type=mujoco.mjtGeom.mjGEOM_BOX,
-        size=[cfg.CUBE_HALF] * 3,
-        mass=0.03,
-        rgba=[0.1, 0.3, 0.95, 1],
-        friction=[1.5, 0.01, 0.001],
-        condim=6,
-    )
+    for (x, y), cube_name in zip(
+        cfg.CUBE_SLOTS_XY,
+        cfg.CUBE_LAYOUTS[layout],
+        strict=True,
+    ):
+        cube = spec.worldbody.add_body(
+            name=cube_name,
+            pos=[x, y, cfg.CUBE_HALF],
+        )
+        cube.add_freejoint()
+        cube.add_geom(
+            name=f"{cube_name}_geom",
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            size=[cfg.CUBE_HALF] * 3,
+            mass=0.03,
+            rgba=cfg.CUBE_COLORS[cube_name],
+            friction=[1.5, 0.01, 0.001],
+            condim=6,
+        )
+
 
     # site는 시각 표시이며 물체와 충돌하지 않습니다.
     spec.worldbody.add_site(
@@ -88,9 +97,9 @@ def build_scene():
 class Robot:
     """시뮬레이션 상태와 로봇 제어에 필요한 정보를 관리합니다."""
 
-    def __init__(self, cancel_event=None):
+    def __init__(self, cancel_event=None, layout='A'):
         """장면과 관절 인덱스를 준비하고 관찰 자세로 초기화합니다."""
-        self.model = build_scene()
+        self.model = build_scene(layout)
         self.data = mujoco.MjData(self.model)
         self.ik_data = mujoco.MjData(self.model)
 
@@ -112,9 +121,10 @@ class Robot:
         self.site_id = find_id(
             self.model, mujoco.mjtObj.mjOBJ_SITE, "gripperframe"
         )
-        self.cube_id = find_id(
-            self.model, mujoco.mjtObj.mjOBJ_BODY, "blue_cube"
-        )
+        self.cube_ids = {
+            name: find_id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+            for name in cfg.CUBE_LAYOUTS[layout]
+        }
 
         joints = self.model.actuator_trnid[self.arm_ids, 0]
         self.qpos_ids = self.model.jnt_qposadr[joints]
@@ -478,9 +488,9 @@ class Robot:
 
         self.wait_reached(viewer, position)
 
-    def evaluate_destination(self):
+    def evaluate_destination(self, cube_id):
         """시뮬레이터 정답 상태를 사용해 이동 결과만 평가합니다."""
-        actual = self.data.xpos[self.cube_id].copy()
+        actual = self.data.xpos[cube_id].copy()
         xy_error = float(np.linalg.norm(
             actual[:2] - cfg.PLACE[:2]
         ))
@@ -511,7 +521,7 @@ class Robot:
         self.move_controls(viewer, target, 2.0)
         self.hold(viewer, 0.5)
 
-    def execute_pick(self, viewer, source):
+    def execute_pick(self, viewer, source, cube_id):
         """관찰된 좌표를 기준으로 집기·운반·놓기를 수행합니다."""
         self.check_operation(viewer)
 
@@ -522,16 +532,23 @@ class Robot:
         if source.shape != (3,) or not np.isfinite(source).all():
             raise ValueError("유효한 3차원 파지 좌표가 필요합니다.")
 
+        if cube_id not in self.cube_ids.values():
+            raise ValueError(f"장면에 등록되지 않은 큐브 ID입니다: {cube_id}")
+
+        before = self.data.xpos[cube_id].copy()
+        arrival = self.evaluate_destination(cube_id)
+
         if (
-            np.linalg.norm(source[:2] - cfg.PLACE[:2])
+            arrival["success"]
+            and np.linalg.norm(before[:2] - cfg.PLACE[:2])
             < cfg.ALREADY_AT_DESTINATION_TOL
         ):
             return {
                 "status": "already_at_destination",
                 "message": "선택 물체가 이미 목적지에 있습니다.",
+                "evaluation": arrival,
             }
-
-        before = self.data.xpos[self.cube_id].copy()
+        
         self.stage = "planning"
         plans = self.plan_path(source)
 
@@ -554,8 +571,8 @@ class Robot:
         print("4. 들어 올리기")
         self.run_segment(viewer, plans[2], 2.5)
 
-        if self.data.xpos[self.cube_id, 2] < before[2] + 0.025:
-            raise RuntimeError("파지 실패: 큐브가 함께 올라오지 않았습니다.")
+        if self.data.xpos[cube_id, 2] < before[2] + 0.025:
+            raise RuntimeError("파지 실패: 선택된 큐브가 함께 올라오지 않았습니다.")
 
         for index, stage, title, seconds in [
             (3, "transfer", "5. 목적지로 이동", 3.0),
@@ -573,7 +590,7 @@ class Robot:
         self.run_segment(viewer, plans[5], 2.0)
         self.hold(viewer, 1.0)
 
-        evaluation = self.evaluate_destination()
+        evaluation = self.evaluate_destination(cube_id)
         return {
             "status": "success" if evaluation["success"] else "failed",
             "source_from_vision_m": source.tolist(),

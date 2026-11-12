@@ -26,9 +26,9 @@ if __package__ in (None, ""):
         0, str(Path(__file__).resolve().parent.parent)
     )
 
-from week1 import config as cfg
-from week1.agent import Agent, capture
-from week1.robot import OperationCancelled, Robot
+from codes import config as cfg
+from codes.agent import Agent, capture
+from codes.robot import OperationCancelled, Robot
 
 
 def configure_viewer(viewer):
@@ -429,13 +429,14 @@ def run_demo():
             robot.hold(viewer, 1.5)
 
             # 독립 데모에서만 시뮬레이터 정답 좌표를 사용합니다.
-            source = robot.data.xpos[robot.cube_id].copy()
-            result = robot.execute_pick(viewer, source)
+            cube_id = robot.cube_ids["blue_cube"]
+            source = robot.data.xpos[cube_id].copy()
+            result = robot.execute_pick(viewer, source, cube_id)
             print(result["message"])
 
             if result["status"] == "success":
                 robot.park(viewer)
-                print(robot.evaluate_destination())
+                print(robot.evaluate_destination(cube_id))
 
             print("확인이 끝나면 MuJoCo 창을 닫으세요.")
 
@@ -469,7 +470,7 @@ def main():
 
     try:
         if options.self_test:
-            from week1.test_pipeline import run_tests
+            from codes.test_pipeline import run_tests
 
             run_tests()
         elif options.demo:
